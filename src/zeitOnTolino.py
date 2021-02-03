@@ -28,9 +28,11 @@ class ZeitOnTolino:
         requestUrl = 'https://meine.zeit.de/anmelden'
         payload='email='+self._encZeitUser+'&pass='+self._encZeitPassword+'&return_url='+urllib.parse.quote(url)
         headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'  
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cache-Control': 'no-cache'
         }
         response = requests.request('POST', requestUrl, headers=headers, data=payload)
+        assert(response.status_code == 200), "Request failed ("+str(response.status_code)+")."
         return response.text
 
     def _getLatestEditionsDates(self):
@@ -50,6 +52,7 @@ class ZeitOnTolino:
         editionSoup = BeautifulSoup(editionHtml, features='html.parser')
 
         ePubLink = editionSoup.find("a", {"href" : lambda L: L and L.endswith('epub')})
+        assert(ePubLink is not None), "Could not find ePub download link."
         ePubDownloadLink = 'https://'+self._encZeitUser+':'+self._encZeitPassword+'@'+ePubLink['href'][8:]
         
         return ePubDownloadLink
@@ -57,6 +60,7 @@ class ZeitOnTolino:
     def _downloadEditionEPub(self, url):   
         fileName = ZeitOnTolino._ePubsDir+'/'+url.rsplit('/', 1)[1]
         download = requests.get(url, allow_redirects=True)
+        assert(download.status_code == 200), "Request failed ("+str(download.status_code)+")."
         newEPubFile = open(fileName, 'wb')
         newEPubFile.write(download.content)   
         newEPubFile.close()  
@@ -67,21 +71,27 @@ class ZeitOnTolino:
         ePubFileNames = os.listdir(ZeitOnTolino._ePubsDir)
         logging.info('- Local ePubs: '+str(len(ePubFileNames))+' files found')
         
-        logging.info('- Fetching latest ZEIT editions ... ') #end
-        latestEditionsDates = self._getLatestEditionsDates()
-        logging.info('  ... done.')
-        for latestEditionDate in latestEditionsDates:
-            logging.info('- Checking ZEIT edition '+latestEditionDate+' ... ') #end
-            ePubDownloadUrl = self._getEPubDownloadUrlOfEdition(latestEditionDate)
-            ePubFileName = ePubDownloadUrl.rsplit('/', 1)[1]
-            if ePubFileName not in ePubFileNames:
-                logging.info('  ... downloading '+ePubFileName+' ... ') #end
-                self._downloadEditionEPub(ePubDownloadUrl)
-                logging.info('  ... done.')
-            else:
-                logging.info('  ... already exists in local ePubs.')  
+        logging.info('- Fetching latest ZEIT editions ... ')
+        try:
+            latestEditionsDates = self._getLatestEditionsDates()
+            logging.info('  ... done.')
+            for latestEditionDate in latestEditionsDates:
+                logging.info('- Checking ZEIT edition '+latestEditionDate+' ... ')
+                try:
+                    ePubDownloadUrl = self._getEPubDownloadUrlOfEdition(latestEditionDate)
+                    ePubFileName = ePubDownloadUrl.rsplit('/', 1)[1]
+                    if ePubFileName not in ePubFileNames:
+                        logging.info('  ... downloading '+ePubFileName+' ... ')
+                        self._downloadEditionEPub(ePubDownloadUrl)
+                        logging.info('  ... done.')
+                    else:
+                        logging.info('  ... already exists in local ePubs.')  
+                except AssertionError as error:
+                    logging.error('  ... an error occurred: ' + str(error))
 
-        logging.info('... done.')  
+            logging.info('... done.')  
+        except:
+            logging.error('  ... an error occurred: ' + str(error))
 
     def _getEditionsTitlesInTolinoCloud(self):
         editionsTitlesInTolinoCloud = []
@@ -117,9 +127,9 @@ class ZeitOnTolino:
 
         for ePubFileName in ePubFileNames:
             ePubMeta = epub_meta.get_epub_metadata(ZeitOnTolino._ePubsDir+'/'+ePubFileName)
-            logging.info('- Checking "'+ePubMeta['title']+'" ... ') #end
+            logging.info('- Checking "'+ePubMeta['title']+'" ... ')
             if ePubMeta['title'] not in editionsTitlesInTolinoCloud:
-                logging.info('  ... uploading ...') #end
+                logging.info('  ... uploading ...')
                 self._uploadEditionToTolinoCloud(ePubFileName)
                 logging.info('  ... done.')
             else:
