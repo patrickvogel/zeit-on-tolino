@@ -15,6 +15,7 @@ class ZeitOnTolino:
 
     _encZeitUser = urllib.parse.quote(os.environ['ZEIT_USER'])
     _encZeitPassword = urllib.parse.quote(os.environ['ZEIT_PASSWORD'])
+    _zeitHttp = requests.session()
 
     _tolinoUser = os.environ['TOLINO_USER']
     _tolinoPassword = os.environ['TOLINO_PASSWORD']
@@ -24,15 +25,22 @@ class ZeitOnTolino:
     if not os.path.exists(_ePubsDir):
         os.makedirs(_ePubsDir)
 
-    def _readSecuredZeitWebsite(self, url):
+    def _authenticateOnZeitWebsite(self):
         requestUrl = 'https://meine.zeit.de/anmelden'
-        payload='email='+self._encZeitUser+'&pass='+self._encZeitPassword+'&return_url='+urllib.parse.quote(url)
+        payload='email='+self._encZeitUser+'&pass='+self._encZeitPassword
         headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Cache-Control': 'no-cache'
         }
-        response = requests.request('POST', requestUrl, headers=headers, data=payload)
+        response = self._zeitHttp.post(requestUrl, headers=headers, data=payload)
+        assert(response.status_code == 200), "Authorization failed ("+str(response.status_code)+")."
+
+        return response.text    
+
+    def _readSecuredZeitWebsite(self, url):
+        response = self._zeitHttp.get(url)
         assert(response.status_code == 200), "Request failed ("+str(response.status_code)+")."
+
         return response.text
 
     def _getLatestEditionsDates(self):
@@ -53,13 +61,12 @@ class ZeitOnTolino:
 
         ePubLink = editionSoup.find("a", {"href" : lambda L: L and L.endswith('epub')})
         assert(ePubLink is not None), "Could not find ePub download link."
-        ePubDownloadLink = 'https://'+self._encZeitUser+':'+self._encZeitPassword+'@'+ePubLink['href'][8:]
         
-        return ePubDownloadLink
+        return ePubLink['href']
 
     def _downloadEditionEPub(self, url):   
         fileName = ZeitOnTolino._ePubsDir+'/'+url.rsplit('/', 1)[1]
-        download = requests.get(url, allow_redirects=True)
+        download = self._zeitHttp.get(url)
         assert(download.status_code == 200), "Request failed ("+str(download.status_code)+")."
         newEPubFile = open(fileName, 'wb')
         newEPubFile.write(download.content)   
@@ -71,8 +78,12 @@ class ZeitOnTolino:
         ePubFileNames = os.listdir(ZeitOnTolino._ePubsDir)
         logging.info('- Local ePubs: '+str(len(ePubFileNames))+' files found')
         
-        logging.info('- Fetching latest ZEIT editions ... ')
+        
         try:
+            logging.info('- Authenticate on ZEIT website ...')
+            self._authenticateOnZeitWebsite()
+            logging.info(' ... done.')
+            logging.info('- Fetching latest ZEIT editions ... ')
             latestEditionsDates = self._getLatestEditionsDates()
             logging.info('  ... done.')
             for latestEditionDate in latestEditionsDates:
