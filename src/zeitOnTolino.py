@@ -16,10 +16,12 @@ class ZeitOnTolino:
     _encZeitUser = urllib.parse.quote(os.environ['ZEIT_USER'])
     _encZeitPassword = urllib.parse.quote(os.environ['ZEIT_PASSWORD'])
     _zeitHttp = requests.session()
-
+    
     _tolinoUser = os.environ['TOLINO_USER']
     _tolinoPassword = os.environ['TOLINO_PASSWORD']
     _tolinoPartner = int(os.environ['TOLINO_PARTNER'])
+    _tolinoUseDeviceToken = bool(os.environ['TOLINO_USE_DEVICE_TOKEN']=="TRUE")
+    _tolinoCloud = TolinoCloud(_tolinoPartner, _tolinoUseDeviceToken)
 
     _ePubsDir = '/var/epubs'
     if not os.path.exists(_ePubsDir):
@@ -61,7 +63,7 @@ class ZeitOnTolino:
 
         ePubLink = editionSoup.find("a", {"href" : lambda L: L and L.endswith('epub')})
         assert(ePubLink is not None), "Could not find ePub download link."
-        
+
         return ePubLink['href']
 
     def _downloadEditionEPub(self, url):   
@@ -77,8 +79,7 @@ class ZeitOnTolino:
 
         ePubFileNames = os.listdir(ZeitOnTolino._ePubsDir)
         logging.info('- Local ePubs: '+str(len(ePubFileNames))+' files found')
-        
-        
+
         try:
             logging.info('- Authenticate on ZEIT website ...')
             self._authenticateOnZeitWebsite()
@@ -106,12 +107,8 @@ class ZeitOnTolino:
 
     def _getEditionsTitlesInTolinoCloud(self):
         editionsTitlesInTolinoCloud = []
-        c = TolinoCloud(self._tolinoPartner)
-        c.login(self._tolinoUser, self._tolinoPassword)
-        c.register()
-        inv = c.inventory()
-        c.unregister()
-        c.logout()
+        
+        inv = self._tolinoCloud.inventory()       
 
         for i in inv:
             if i['title'][:8] == 'DIE ZEIT':
@@ -120,33 +117,52 @@ class ZeitOnTolino:
         return editionsTitlesInTolinoCloud
 
     def _uploadEditionToTolinoCloud(self, fileName):
-        c = TolinoCloud(self._tolinoPartner)
-        c.login(self._tolinoUser, self._tolinoPassword)
-        c.register()
-        document_id = c.upload(ZeitOnTolino._ePubsDir+'/'+fileName)
-        c.unregister()
-        c.logout()
+        document_id = self._tolinoCloud.upload(ZeitOnTolino._ePubsDir+'/'+fileName)
+
+    def _loginTolinoCloud(self):
+        self._tolinoCloud.login(self._tolinoUser, self._tolinoPassword)
+        self._tolinoCloud.register()
+
+    def _logoutTolinoCloud(self):
+        self._tolinoCloud.unregister()
+        self._tolinoCloud.logout()
 
     def _syncTolinoCloudWithLocalEpubs(self):
         logging.info('Syncing Tolino Cloud with local ZEIT ePubs ...')    
 
-        ePubFileNames = os.listdir(ZeitOnTolino._ePubsDir)
-        logging.info('- Local ePubs: '+str(len(ePubFileNames))+' files found')
-        
-        editionsTitlesInTolinoCloud = self._getEditionsTitlesInTolinoCloud()
-        logging.info('- Tolino Cloud: '+str(len(editionsTitlesInTolinoCloud))+' files found')
+        try:
+            self._loginTolinoCloud()
 
-        for ePubFileName in ePubFileNames:
-            ePubMeta = epub_meta.get_epub_metadata(ZeitOnTolino._ePubsDir+'/'+ePubFileName)
-            logging.info('- Checking "'+ePubMeta['title']+'" ... ')
-            if ePubMeta['title'] not in editionsTitlesInTolinoCloud:
-                logging.info('  ... uploading ...')
-                self._uploadEditionToTolinoCloud(ePubFileName)
-                logging.info('  ... done.')
-            else:
-                logging.info('  ... already synced.')    
+            ePubFileNames = os.listdir(ZeitOnTolino._ePubsDir)
+            logging.info('- Local ePubs: '+str(len(ePubFileNames))+' files found')
 
-        logging.info('... done.')  
+            try:
+                editionsTitlesInTolinoCloud = self._getEditionsTitlesInTolinoCloud()
+                logging.info('- Tolino Cloud: '+str(len(editionsTitlesInTolinoCloud))+' files found')
+
+                for ePubFileName in ePubFileNames:
+                    ePubMeta = epub_meta.get_epub_metadata(ZeitOnTolino._ePubsDir+'/'+ePubFileName)
+                    logging.info('- Checking "'+ePubMeta['title']+'" ... ')
+                    if ePubMeta['title'] not in editionsTitlesInTolinoCloud:
+                        logging.info('  ... uploading ...')
+                        try: 
+                            logging.info('  ... done.')
+                            self._uploadEditionToTolinoCloud(ePubFileName)
+                        except:
+                            logging.error('  ... failed.')                    
+                    else:
+                        logging.info('  ... already synced.')    
+            except: 
+                logging.error('- Tolino Cloud: Reading inventory failed.')
+            
+            try:
+                self._logoutTolinoCloud()
+            except:
+                logging.warn('- Tolino Cloud: Logout failed.')
+
+            logging.info('... done.')             
+        except:
+            logging.error('- Tolino Cloud: Login failed.')
 
     def syncTolinoCloudWithLatestZeitEditions(self):
         logging.info('+++ SYNC TOLINO CLOUD WITH LATEST ZEIT EDITIONS +++')
@@ -155,4 +171,3 @@ class ZeitOnTolino:
         self._syncTolinoCloudWithLocalEpubs()
 
         logging.info('+++ DONE +++')    
-
